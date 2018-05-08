@@ -1,4 +1,3 @@
-Trans_code_id,Trans_Code,Description
 1,TT,Transaction
 2,PP,Promotion applied on transaction
 3,LL,Loyalty details
