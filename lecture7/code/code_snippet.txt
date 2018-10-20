@@ -1,4 +1,5 @@
 sc
+
 val x = sc.textFile("<Your file>")
 
 val y = x.map(_.split('[')(1))
@@ -57,11 +58,4 @@ peopleDataFrame.registerTempTable("employee")
 val joinedDF = sqlContext.sql("select * from departments join employee on departments.deptId = employee.deptId")
 
 joinedDF.collect
-
-
-
-
-
-
-
 
