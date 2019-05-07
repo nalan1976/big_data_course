@@ -1,0 +1,256 @@
+#Hive-1:
+
+Create database retail location '/data/retail';
+Use retail;
+Create table Store (store_id int, store_num string, city string, address string, open_date string, close_date string) row format delimited fields terminated by ',';
+
+Create table Employee (Employee_id int, Employee_num  int, Store_num string, Employee_name string, Joining_date string, designation string) row format delimited fields terminated by ',';
+
+Create table Promotions (Promo_code_id int, promo_code  string, description string, Promo_start_date string, Promo_end_date string) row format delimited fields terminated by ',';
+
+Create table Loyalty (Loyalty_member_num int, cust_num int, card_no string, joining_date string, points int) row format delimited fields terminated by ',';
+
+Create table Product ( product_id int, product_code string, add_dt string, remove_dt string) row format delimited fields terminated by ',';
+
+Create Table Trans_code (Trans_code_id int, Trans_Code string, Description string) row format delimited fields terminated by ',';
+
+Create Table trans_log ( trans_seq string, trans_code string, col3 string, col4 string, col5 string, col6 string, col7 string, col8 string, col9 string, col10 string, col11 string) row format delimited fields terminated by ',';
+
+create table fact(Tx_id int, Store_id int, Product_id int, loyalty_id int, promo_id int, emp_id int, amt String, opty String, dt String) row format delimited fields terminated by ',';
+
+
+#Hadoop hdfs
+hadoop fs -copyFromLocal Desktop/data/employee.csv /retail/employee
+hadoop fs -copyFromLocal Desktop/data/loyalty.csv /retail/loyalty
+hadoop fs -copyFromLocal Desktop/data/product.csv /retail/product
+hadoop fs -copyFromLocal Desktop/data/promotions.csv /retail/promotions
+hadoop fs -copyFromLocal Desktop/data/store.csv /retail/store
+hadoop fs -copyFromLocal Desktop/data/trans_code.csv /retail/trans_code
+hadoop fs -copyFromLocal Desktop/data/trans_log.csv /retail/trans_log
+
+#Hive-2:
+refresh Employee;
+refresh loyalty;
+refresh product;
+refresh promotions;
+refresh store;
+refresh trans_code;
+refresh trans_log;
+
+#Spark
+val inputFile = sc.textFile("/retail/trans_log/trans_log.csv");
+val rowRDD = inputFile.map(_.split(","));
+
+import sqlContext.implicits._
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types._
+
+val impData = rowRDD.filter(x=>(x(1) == "TT" || x(1) == "LL" || x(1) == "PP"))
+
+val TT = impData.filter(x=> (x(1) == "TT")).map(x=> Row(x(0).toInt, x(1), x(2).toInt, x(3), x(4).toDouble, x(5).toDouble, x(6).toInt, x(7), x(8).toInt, x(9).toInt, x(10)))
+
+val PP = impData.filter(x=> (x(1) == "PP")).map(x=> Row(x(0).toInt, x(1), x(2), x(3), x(4).toDouble, x(5).toDouble, x(6)))
+
+val LL = impData.filter(x=> (x(1) == "LL")).map(x=> Row(x(0).toInt, x(1), x(2), x(3), x(4).toDouble, x(5).toDouble, x(6)))
+
+val ttSchema = StructType(Seq(StructField("seq_num", IntegerType, true),
+StructField("trans_code", StringType, true),
+StructField("item_seq", IntegerType, true),
+StructField("product_cd", StringType, true),
+StructField("amt", DoubleType, true),
+StructField("disc_amt", DoubleType, true),
+StructField("add_flg", IntegerType, true),
+StructField("store", StringType, true),
+StructField("emp_num", IntegerType, true),
+StructField("lane", IntegerType, true),
+StructField("t_stmp", StringType, true) ) )
+
+val ttSchemaPP = StructType(Seq(StructField("seq_num", IntegerType, true),
+StructField("trans_code", StringType, true),
+StructField("loyalty_cd", StringType, true),
+StructField("store", StringType, true),
+StructField("amt", DoubleType, true),
+StructField("disc_amt", DoubleType, true),
+StructField("t_stmp", StringType, true)
+) )
+
+val ttSchemaLL = StructType(Seq(StructField("seq_num", IntegerType, true),
+StructField("trans_code", StringType, true),
+StructField("promo_cd", StringType, true),
+StructField("store", StringType, true),
+StructField("amt", DoubleType, true),
+StructField("disc_amt", DoubleType, true),
+StructField("t_stmp", StringType, true)
+) )
+
+
+val targetSchema = StructType(Seq(StructField("Tx_id", IntegerType, true),
+StructField("Store_id", IntegerType, true), 
+StructField("Product_id", IntegerType, true),
+StructField("loyalty_id", IntegerType, true),
+StructField("promo_id", IntegerType, true),
+StructField("emp_id", IntegerType, true),
+StructField("amt", StringType, true),
+StructField("opty", StringType, true),
+StructField("dt", StringType, true)
+))
+
+val dfTT = sqlContext.createDataFrame(TT, ttSchema)
+dfTT.registerTempTable("trans_tt")
+val resultsTT = sqlContext.sql("SELECT * FROM trans_tt")
+resultsTT.show()
+
+val dfPP = sqlContext.createDataFrame(PP, ttSchemaPP)
+dfPP.registerTempTable("trans_pp")
+val resultsPP = sqlContext.sql("SELECT * FROM trans_pp")
+resultsPP.show()
+
+val dfLL = sqlContext.createDataFrame(LL, ttSchemaLL)
+dfLL.registerTempTable("trans_ll")
+val resultsLL = sqlContext.sql("SELECT * FROM trans_ll")
+resultsLL.show()
+
+val tTT = sqlContext.sql("""select tt.seq_num, st.store_id, pr.product_id, ll.promo_cd, em.Employee_id, tt.amt, tt.lane, 
+tt.t_stmp from trans_tt tt inner join retail.store st on tt.store = st.store_num left join trans_ll ll on tt.seq_num = 
+ll.seq_num inner join retail.product pr on pr.product_code = tt.product_cd inner join retail.employee em on em.Employee_num = tt.emp_num""")
+tTT.show()
+
+val tPP = sqlContext.sql("""select pp.seq_num, pro.Promo_code_id from trans_pp pp inner join retail.promotions pro 
+on pp.loyalty_cd = pro.promo_code
+""")
+tPP.show()
+
+val tLL = sqlContext.sql("""select ll.seq_num, loy.Loyalty_member_num from trans_ll ll inner join retail.loyalty loy 
+on ll.promo_cd = loy.card_no
+""")
+tLL.show()
+
+sqlContext.sql("DROP TABLE IF EXISTS tbl_tt")
+sqlContext.sql("DROP TABLE IF EXISTS tbl_ll")
+sqlContext.sql("DROP TABLE IF EXISTS tbl_pp")
+
+sqlContext.sql("""create table tbl_tt as select tt.seq_num, st.store_id, pr.product_id, ll.promo_cd, em.Employee_id, tt.amt, tt.lane, 
+tt.t_stmp from trans_tt tt inner join retail.store st on tt.store = st.store_num left join trans_ll ll on tt.seq_num = 
+ll.seq_num inner join retail.product pr on pr.product_code = tt.product_cd inner join retail.employee em on em.Employee_num = tt.emp_num""")
+sqlContext.sql("select * from tbl_tt").show
+
+sqlContext.sql("""create table tbl_pp as select pp.seq_num, pro.Promo_code_id from trans_pp pp inner join retail.promotions pro 
+on pp.loyalty_cd = pro.promo_code
+""")
+sqlContext.sql("select * from tbl_pp").show
+
+sqlContext.sql("""create table tbl_ll as select ll.seq_num, loy.Loyalty_member_num from trans_ll ll inner join retail.loyalty loy 
+on ll.promo_cd = loy.card_no
+""")
+sqlContext.sql("select * from tbl_ll").show
+
+def getTrxId(ts:String, store_id:Int, lane:Int, trans_seq:Int): Long = {
+  val t_date = ts.replaceAll("-","").split(" ")(0) 
+  val t_store_id = "%05d".format(store_id) 
+  val t_lane = "%02d".format(lane) 
+  val t_trans_seq = "%04d".format(trans_seq) 
+  (t_date + t_store_id.toString + t_lane.toString + t_trans_seq.toString).toLong
+}
+
+val t_Id = getTrxId(_,_,_,_)
+
+val transactionId = sqlContext.udf.register("getTrxId", t_Id)
+
+sqlContext.sql("""select getTrxId(tt.t_stmp, tt.store_id, tt.lane, tt.seq_num) as Tx_Id, tt.store_id, tt.product_id, ll.Loyalty_member_num,
+pp.Promo_code_id, tt.Employee_id, tt.amt, tt.t_stmp from tbl_tt tt left join tbl_pp pp on tt.seq_num = pp.seq_num 
+left join tbl_ll ll on tt.seq_num = ll.seq_num
+""").show()
+
+sqlContext.sql("DROP TABLE IF EXISTS stg_trx")
+
+sqlContext.sql("""create table stg_trx as select getTrxId(tt.t_stmp, tt.store_id, tt.lane, tt.seq_num) as Tx_Id, tt.store_id, tt.product_id, 
+ll.Loyalty_member_num,pp.Promo_code_id, tt.Employee_id, tt.amt, tt.t_stmp from tbl_tt tt left join tbl_pp pp on tt.seq_num = pp.seq_num 
+left join tbl_ll ll on tt.seq_num = ll.seq_num
+""")
+
+sqlContext.sql("select * from stg_trx").show
+
+sqlContext.sql("insert overwrite table retail.fact select stg.Tx_id, stg.store_id, stg.product_id, stg.loyalty_member_num, stg.promo_code_id, stg.employee_id, sum(stg.amt) OVER (PARTITION BY stg.Tx_id, stg.product_id), count(stg.product_id) OVER (PARTITION BY stg.Tx_id, stg.product_id) as Qty, stg.t_stmp  from stg_trx stg")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##
+sqlContext.sql("select * from ttStageTable").collect
+
+sqlContext.sql("select * from llStageTable").collect
+
+sqlContext.sql("select * from ppStageTable").collect
+
+sqlContext.sql("select tt.*, s.store_id from ttStageTable tt join mydb.store s on tt.store = s.store_num").collect
+
+def getTrandId(ts:String, d_store_id:Int, d_lane:Int, d_trans_seq:Int): Long = {
+  val daydate = ts.replaceAll("-","").split(" ")(0)
+  val store_id = "%05d".format(d_store_id)
+  val lane = "%02d".format(d_lane)
+  val trans_seq = "%04d".format(d_trans_seq)
+  (daydate + store_id.toString + lane.toString + trans_seq.toString).toLong
+}
+
+val transId = getTrandId(_,_,_,_)
+
+val tid = sqlContext.udf.register("getTransId", transId)
+
+a.select(tid(a("t_stmp"), a("store_id"), a("lane"), a("seq_num")))
+
+#ref: https://stackoverflow.com/questions/8131291/how-to-convert-an-int-to-a-string-of-a-given-length-with-leading-zeros-to-align
+
+
+
+#middle result:
+
+
+trans_tt
++-------+----------+--------+-------------+----+--------+-------+-----+-------+----+----------------+--------+
+|seq_num|trans_code|item_seq|   product_cd| amt|disc_amt|add_flg|store|emp_num|lane|          t_stmp|store_id|
++-------+----------+--------+-------------+----+--------+-------+-----+-------+----+----------------+--------+
+|      2|        TT|       1|        Bread|12.0|     2.0|      1|SDHJ0|     23|   1|2018-01-01 20:21|       4|
+|      2|        TT|       2| Scandinavian| 8.0|     0.0|      1|SDHJ0|     23|   1|2018-01-01 20:22|       4|
+|      2|        TT|       3|Hot chocolate|5.78|     1.2|      1|SDHJ0|     23|   1|2018-01-01 20:23|       4|
+|      2|        TT|       4|          Jam| 2.5|     0.0|      1|SDHJ0|     23|   1|2018-01-01 20:24|       4|
+|      2|        TT|       5|      Cookies|5.78|     0.0|     -1|SDHJ0|     23|   1|2018-01-01 20:25|       4|
+|      6|        TT|       1|        Bread|12.0|     0.0|      1|SDHJ0|      4|   1|2018-01-01 21:30|       4|
+|      6|        TT|       2| Scandinavian| 8.0|     0.0|      1|SDHJ0|      4|   1|2018-01-01 21:30|       4|
+|      6|        TT|       3|Hot chocolate|5.78|     0.0|      1|SDHJ0|      4|   1|2018-01-01 21:30|       4|
+|      6|        TT|       4|          Jam| 2.5|     0.0|      1|SDHJ0|      4|   1|2018-01-01 21:30|       4|
+|      6|        TT|       5|       Muffin|10.0|     2.0|      1|SDHJ0|      4|   1|2018-01-01 21:31|       4|
++-------+----------+--------+-------------+----+--------+-------+-----+-------+----+----------------+--------+
+
+trans_pp
++-------+----------+-----------+-----+----+--------+----------------+
+|seq_num|trans_code| loyalty_cd|store| amt|disc_amt|          t_stmp|
++-------+----------+-----------+-----+----+--------+----------------+
+|      2|        PP|loyaltydisc|SDHJ0|23.0|     1.0|2018-01-01 20:27|
++-------+----------+-----------+-----+----+--------+----------------+
+
+
+trans_ll
++-------+----------+--------+-----+----+--------+----------------+
+|seq_num|trans_code|promo_cd|store| amt|disc_amt|          t_stmp|
++-------+----------+--------+-----+----+--------+----------------+
+|      2|        LL|   PQR1W|SDHJ0|23.0|     1.0|2018-01-01 20:26|
++-------+----------+--------+-----+----+--------+----------------+
+
+
+create table fact(Tx_id int, Store_id int, Product_id int, loyalty_id int, promo_id int, emp_id int, amt String, opty String, dt String) row format delimited fields terminated by ',';
+
+Transaction ID = 'daydate-yyyymmdd' + 'store_id' + 'lane' + 'Trans_Seq'		
+
+
+select tt.TX_ID , ttS.store_id, ttP.product_id,   from trans_tt tt join retail.store s on tt.store = s.store_num
